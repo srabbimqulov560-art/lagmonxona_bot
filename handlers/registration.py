@@ -32,11 +32,11 @@ async def cmd_start(message: Message, state: FSMContext):
     # Restoran haqida chiroyli ma'lumot va linklar
     welcome_text = (
         "🍜 <b>\"Lag'monxona Durujba\"</b> oilaviy restoranining rasmiy botiga xush kelibsiz!\n\n"
-        "📍 <b>Manzil:</b> Toshkent sh., Chilonzor tumani, Bunyodkor shoh ko'chasi (Xalqlar Do'stligi metrosi yonida).\n"
+        "📍 <b>Manzil:</b> Toshkent sh. Islom Karimov ko'chasi (Xalqlar Do'stligi metrosi yonida).\n"
         "🗺 <a href='https://yandex.uz/maps/-/CDq~rM~I'>Joylashuvni xaritada ko'rish</a>\n\n"
         "📞 <b>Aloqa uchun telefonlar:</b>\n"
-        "▫️ +998 93 760 60 96\n"
-        "▫️ +998 90 123 45 67\n"
+        "▫️ +998 90 979 23 93\n"
+        "▫️ +998 90 480 23 93\n"
     )
 
     # Mijoz bazada bormi tekshiramiz
@@ -101,13 +101,13 @@ async def process_name(message: Message, state: FSMContext):
         text = (
             "Rahmat! 📱 Endi telefon raqamingizni yuboring.\n\n"
             "❗️ <i>Kuryerimiz siz bilan bog'lanishi uchun aniq ishlaydigan raqam kiriting.</i>\n\n"
-            "Pastdagi tugmani bosishingiz yoki raqamingizni qo'lda yozishingiz mumkin (Masalan: 93 760 60 96)."
+            "Pastdagi tugmani bosishingiz yoki raqamingizni qo'lda yozishingiz mumkin (Masalan: 93 123 45 67 )."
         )
     else:
         text = (
             "Спасибо! 📱 Теперь отправьте свой номер телефона.\n\n"
             "❗️ <i>Введите действующий номер, чтобы наш курьер мог с вами связаться.</i>\n\n"
-            "Вы можете нажать кнопку ниже или ввести номер вручную (Например: 93 760 60 96)."
+            "Вы можете нажать кнопку ниже или ввести номер вручную (Например: 93 123 45 67)."
         )
         
     await message.answer(text, reply_markup=phone_kb, parse_mode="HTML")
@@ -130,7 +130,7 @@ async def process_phone(message: Message, state: FSMContext):
         elif len(clean_phone) == 12 and clean_phone.startswith("998"):
             phone_number = f"+{clean_phone}"
         else:
-            err_text = "⚠️ Iltimos, to'g'ri telefon raqamini kiriting.\n(Masalan: <b>93 760 60 96</b> yoki <b>+998937606096</b>)"
+            err_text = "⚠️ Iltimos, to'g'ri telefon raqamini kiriting.\n(Masalan: <b>93 123 45 67</b> yoki <b>+998931234567</b>)"
             await message.answer(err_text, parse_mode="HTML")
             return
     else:

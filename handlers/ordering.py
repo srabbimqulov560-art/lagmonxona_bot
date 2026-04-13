@@ -1,4 +1,5 @@
 import math
+import asyncio
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery, 
@@ -24,11 +25,12 @@ router = Router()
 # ASOSIY SOZLAMALAR VA CONSTANTALAR
 # ==========================================
 DELIVERY_FEE = 10000
-
-# Lag'monxona Durujba'ning aniq koordinatalari
 RESTAURANT_LAT = 41.31124 
 RESTAURANT_LON = 69.24435  
 MAX_DISTANCE_KM = 2.5     
+
+# Faol buyurtmalarning budilniklarini ushlab turuvchi xotira
+ACTIVE_ALERTS = {}
 
 class Checkout(StatesGroup):
     location = State()
@@ -54,7 +56,7 @@ PRODUCTS = {
 # YORDAMCHI FUNKSIYALAR
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371.0 # Yerning radiusi (km)
+    R = 6371.0 
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
@@ -110,6 +112,89 @@ async def get_menu_and_cart_content(session, telegram_id):
 
     return text, InlineKeyboardMarkup(inline_keyboard=inline_kb)
 
+# ==========================================
+# ⏰ TINIMSIZ XABAR JONATISH TSIKLI (YANGI)
+# ==========================================
+async def order_alert_task(bot: Bot, order_id: int, telegram_id: int, short_text: str, full_text: str, chat_id: int):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 QABUL QILISH", callback_data=f"accept_{order_id}_{telegram_id}")]
+    ])
+    
+    # 1. Birinchi xabarni yuboramiz
+    try:
+        msg = await bot.send_message(chat_id, short_text, reply_markup=kb, parse_mode="HTML")
+        ACTIVE_ALERTS[order_id] = {
+            "stop": False,
+            "last_message_id": msg.message_id,
+            "full_text": full_text
+        }
+    except Exception as e:
+        print(f"Xabar yuborishda xato: {e}")
+        return
+        
+    # 2. To'xtatilmaguncha har 5 soniyada yangilab turamiz
+    while order_id in ACTIVE_ALERTS and not ACTIVE_ALERTS[order_id]["stop"]:
+        await asyncio.sleep(5)
+        
+        if order_id not in ACTIVE_ALERTS or ACTIVE_ALERTS[order_id]["stop"]:
+            break
+            
+        old_msg_id = ACTIVE_ALERTS[order_id]["last_message_id"]
+        
+        # Eskisini o'chiramiz
+        try:
+            await bot.delete_message(chat_id, old_msg_id)
+        except Exception:
+            pass 
+            
+        # Yangisini yuboramiz
+        try:
+            new_msg = await bot.send_message(chat_id, short_text, reply_markup=kb, parse_mode="HTML")
+            ACTIVE_ALERTS[order_id]["last_message_id"] = new_msg.message_id
+        except Exception:
+            pass 
+
+# ==========================================
+# QABUL QILISH VA CHEK CHIQARISH TUGMALARI (YANGI)
+# ==========================================
+@router.callback_query(F.data.startswith("accept_"))
+async def process_accept_order(callback: CallbackQuery, bot: Bot):
+    parts = callback.data.split("_")
+    order_id = int(parts[1])
+    telegram_id = int(parts[2])
+    
+    if order_id in ACTIVE_ALERTS:
+        # Budilnikni to'xtatamiz
+        ACTIVE_ALERTS[order_id]["stop"] = True 
+        full_text = ACTIVE_ALERTS[order_id]["full_text"]
+        
+        # Yangi iiko va status tugmalarini yasaymiz
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🖨 Chek chiqarish (iiko)", callback_data=f"print_{order_id}")],
+            [
+                InlineKeyboardButton(text="✅ Yetkazildi", callback_data=f"status_completed_{order_id}_{telegram_id}"),
+                InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{order_id}_{telegram_id}")
+            ]
+        ])
+        
+        try:
+            await callback.message.edit_text(text=full_text, reply_markup=admin_kb, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+            
+        await callback.answer("✅ Buyurtma qabul qilindi!", show_alert=False)
+        del ACTIVE_ALERTS[order_id]
+    else:
+        await callback.answer("Bu buyurtma allaqachon qabul qilingan.", show_alert=True)
+
+@router.callback_query(F.data.startswith("print_"))
+async def process_print_receipt(callback: CallbackQuery):
+    await callback.answer("🖨 iiko integratsiyasi tayyor bo'lgach, avtomatik chek chiqadi!", show_alert=True)
+
+
+# ==========================================
+# ASOSIY BUYURTMA SAQLASH (YANGILANGAN)
+# ==========================================
 async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, payment_type: str, payment_info: dict = None):
     telegram_id = message.from_user.id
     checkout_data = await state.get_data()
@@ -158,6 +243,7 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
     
     await state.clear()
     
+    # Mijozga javob
     text = (
         f"✅ <b>Buyurtma muvaffaqiyatli qabul qilindi!</b>\n\n"
         f"🧾 <b>Buyurtma raqami:</b> #{new_daily_number}\n"
@@ -167,7 +253,6 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
     )
     await message.answer(text, reply_markup=get_main_menu_kb("uz"), parse_mode="HTML")
 
-    # To'lov cheki ma'lumotlarini tayyorlash (Karta to'lovi uchun)
     receipt_text = ""
     if payment_info:
         receipt_text = (
@@ -176,8 +261,17 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
             f"▪️ Telegram Tranzaksiya ID:\n<code>{payment_info['telegram_charge_id']}</code>\n\n"
         )
 
-    admin_text = (
-        f"🆕 <b>YANGI BUYURTMA #{new_daily_number}</b>\n\n"
+    # 1. Admin guruhiga tinimsiz boradigan QISQA xabar
+    short_alert_text = (
+        f"🚨 <b>DIQQAT! YANGI BUYURTMA #{new_daily_number}</b>\n\n"
+        f"📞 <b>Tel:</b> {phone_number}\n"
+        f"🍽 <b>Menyu:</b>\n{items_text}\n"
+        f"<i>⚠️ Qabul qilinmaguncha bu xabar har 5 soniyada yangilanadi!</i>"
+    )
+
+    # 2. Qabul qilingandan keyin ko'rinadigan TO'LIQ xabar (Kuryer va lokatsiya bilan)
+    full_admin_text = (
+        f"🆕 <b>BUYURTMA #{new_daily_number} (QABUL QILINGAN)</b>\n\n"
         f"👤 Mijoz: {message.from_user.full_name} (@{message.from_user.username})\n"
         f"📞 Telefon: {phone_number}\n\n"
         f"🍽 <b>Buyurtma tarkibi:</b>\n{items_text}\n"
@@ -188,16 +282,17 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
         f"💰 <b>Jami summa: {total_price:,.0f} so'm</b>\n"
     )
     
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Yetkazildi", callback_data=f"status_completed_{new_order.id}_{telegram_id}")],
-        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{new_order.id}_{telegram_id}")]
-    ])
-    
-    try:
-        await bot.send_message(chat_id=ADMIN_GROUP_ID, text=admin_text, reply_markup=admin_kb, parse_mode="HTML", disable_web_page_preview=True)
-    except Exception as e:
-        print(f"Admin guruhiga yuborishda xato: {e}")
-
+    # Fon vazifasini (Budilnikni) ishga tushiramiz
+    asyncio.create_task(
+        order_alert_task(
+            bot=bot, 
+            order_id=new_order.id, 
+            telegram_id=telegram_id,
+            short_text=short_alert_text, 
+            full_text=full_admin_text, 
+            chat_id=ADMIN_GROUP_ID
+        )
+    )
 
 # ==========================================
 # MENYU VA SAVAT BO'LIMI 
@@ -294,7 +389,7 @@ async def add_to_cart_db(callback: CallbackQuery):
 
 @router.callback_query(F.data == "clear_cart")
 async def clear_cart(callback: CallbackQuery):
-    telegram_id = callback.fromuser.id if hasattr(callback, "from_user") else callback.from_user.id
+    telegram_id = getattr(callback.from_user, "id", callback.from_user.id)
     async with AsyncSessionLocal() as session:
         cart = await get_or_create_cart(session, telegram_id)
         await session.execute(CartItem.__table__.delete().where(CartItem.cart_id == cart.id))
@@ -353,8 +448,7 @@ async def process_location(message: Message, state: FSMContext):
     if distance > MAX_DISTANCE_KM:
         text = (
             f"❗️ <b>Kechirasiz, siz restorandan {distance:.1f} km masofada joylashgansiz.</b>\n\n"
-            f"Bizning xususiy yetkazib berish xizmatimiz faqat <b>{MAX_DISTANCE_KM} km</b> radiusda ishlaydi.\n\n"
-            f"🚕 O'zingizga qulay bo'lishi uchun <b>Yandex Go</b> yoki <b>Uzum Tezkor</b> orqali buyurtma berishingizni yoki o'zingiz olib ketishingizni so'raymiz."
+            f"Bizning xususiy yetkazib berish xizmatimiz faqat <b>{MAX_DISTANCE_KM} km</b> radiusda ishlaydi."
         )
         await state.clear()
         await message.answer(text, reply_markup=get_main_menu_kb("uz"), parse_mode="HTML")
@@ -376,12 +470,10 @@ async def process_notes(message: Message, state: FSMContext):
     await message.answer("💳 <b>To'lov turini tanlang:</b>", reply_markup=kb, parse_mode="HTML")
     await state.set_state(Checkout.payment)
 
-# 1. NAQD PUL ORQALI TO'LOV
 @router.message(Checkout.payment, F.text == "💵 Naqd pul")
 async def process_cash_payment(message: Message, state: FSMContext, bot: Bot):
     await save_order_and_notify(message, state, bot, payment_type="Naqd pul")
 
-# 2. PAYME/CLICK ORQALI TO'LOV
 @router.message(Checkout.payment, F.text == "💳 Payme/Click")
 async def send_invoice(message: Message, state: FSMContext, bot: Bot):
     telegram_id = message.from_user.id
@@ -414,12 +506,10 @@ async def send_invoice(message: Message, state: FSMContext, bot: Bot):
         await message.answer(err_msg, parse_mode="HTML")
         print(f"INVOICE XATOLIGI: {e}")
 
-# 3. PRE-CHECKOUT TASDIQLASH
 @router.pre_checkout_query()
 async def pre_checkout_query_handler(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-# 4. MUVAFFAQIYATLI TO'LOV
 @router.message(F.successful_payment)
 async def successful_payment_handler(message: Message, state: FSMContext, bot: Bot):
     payment_info = {
