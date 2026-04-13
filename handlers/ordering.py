@@ -5,7 +5,8 @@ from aiogram.types import (
     Message, CallbackQuery, 
     InlineKeyboardMarkup, InlineKeyboardButton, 
     ReplyKeyboardMarkup, KeyboardButton, 
-    LabeledPrice, PreCheckoutQuery
+    LabeledPrice, PreCheckoutQuery,
+    FSInputFile, InputMediaPhoto
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -314,6 +315,19 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
 async def show_main_menu(message: Message):
     async with AsyncSessionLocal() as session:
         text, kb = await get_menu_and_cart_content(session, message.from_user.id)
+        
+        # 1. Avval 2 ta menyu rasmini albom qilib yuboramiz
+        try:
+            media = [
+                InputMediaPhoto(media=FSInputFile("menyu1.jpg")),
+                InputMediaPhoto(media=FSInputFile("menyu2.jpg"))
+            ]
+            await message.answer_media_group(media)
+        except Exception as e:
+            # Agar rasm topilmasa, bot xato bermasligi uchun
+            print(f"Menyu rasmlari topilmadi: {e}")
+            
+        # 2. Keyin tugmalarni yuboramiz
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data == "back_to_categories")
