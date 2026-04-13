@@ -29,22 +29,18 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.clear() 
     telegram_id = message.from_user.id
     
-    # Restoran haqida chiroyli ma'lumot va linklar
+    # Restoran haqida chiroyli ma'lumot va linklar (Ijtimoiy tarmoqlar matn ichida)
     welcome_text = (
         "🍜 <b>\"Lag'monxona Durujba\"</b> oilaviy restoranining rasmiy botiga xush kelibsiz!\n\n"
         "📍 <b>Manzil:</b> Toshkent sh. Islom Karimov ko'chasi (Xalqlar Do'stligi metrosi yonida).\n"
         "🗺 <a href='https://yandex.uz/maps/-/CDq~rM~I'>Joylashuvni xaritada ko'rish</a>\n\n"
         "📞 <b>Aloqa uchun telefonlar:</b>\n"
         "▫️ +998 90 979 23 93\n"
-        "▫️ +998 90 480 23 93\n"
+        "▫️ +998 90 480 23 93\n\n"
+        "📱 <b>Bizning ijtimoiy tarmoqlar:</b>\n"
+        "▫️ <a href='http://t.me/lagmonxona_1'>Telegram</a>\n"
+        "▫️ <a href='https://www.instagram.com/lagmonxona.uz?igsh=MXVvYnJjZHlxa2c4ZA=='>Instagram</a>"
     )
-        
-    social_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Telegram kanalimiz", url="http://t.me/lagmonxona_1")],
-        [InlineKeyboardButton(text="📸 Instagram sahifamiz", url="https://www.instagram.com/lagmonxona.uz?igsh=MXVvYnJjZHlxa2c4ZA==")]
-    ])
-    
-    await message.answer("📱 Bizning ijtimoiy tarmoqlarimizga obuna bo'lishni unutmang:", reply_markup=social_kb)
 
     # Mijoz bazada bormi tekshiramiz
     async with AsyncSessionLocal() as session:
@@ -53,11 +49,11 @@ async def cmd_start(message: Message, state: FSMContext):
 
     if user:
         # AGAR BAZADA BO'LSA: To'g'ridan-to'g'ri menyuni beramiz
-        text = welcome_text + "\n👇 <b>Quyidagi menyu orqali buyurtma berishingiz mumkin:</b>"
+        text = welcome_text + "\n\n👇 <b>Quyidagi menyu orqali buyurtma berishingiz mumkin:</b>"
         await message.answer(text, reply_markup=get_main_menu_kb(user.language), parse_mode="HTML", disable_web_page_preview=True)
     else:
         # AGAR YANGI MIJOZ BO'LSA: Buyurtma berish / Ro'yxatdan o'tish tugmasini beramiz
-        text = welcome_text + "\n👇 <b>Buyurtma berish uchun ro'yxatdan o'ting:</b>"
+        text = welcome_text + "\n\n👇 <b>Buyurtma berish uchun ro'yxatdan o'ting:</b>"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🛍 Buyurtma berish", callback_data="start_register")]
         ])
