@@ -6,7 +6,7 @@ from sqlalchemy.future import select
 import re
 from db.engine import AsyncSessionLocal
 from db.models import Order, OrderItem, User
-from handlers.ordering import PRODUCTS
+from core.iiko_api import get_active_menu  # <--- ESKI PRODUCTS O'RNIGA JONLI MENYU ULANDI
 from keyboards.default import get_main_menu_kb
 
 router = Router()
@@ -113,11 +113,15 @@ async def save_new_lang(callback: CallbackQuery):
 
 
 # ==========================================
-# 📋 BUYURTMALARIM BO'LIMI (O'zgarishsiz qoladi)
+# 📋 BUYURTMALARIM BO'LIMI 
 # ==========================================
 @router.message(F.text.in_(["📋 Buyurtmalarim", "📋 Мои заказы"]))
 async def show_orders(message: Message):
     telegram_id = message.from_user.id
+    
+    # <--- JONLI MENYUNI OLAMIZ --->
+    active_menu = await get_active_menu()
+    
     async with AsyncSessionLocal() as session:
         orders = (await session.execute(select(Order).where(Order.telegram_id == telegram_id).order_by(Order.created_at.desc()).limit(5))).scalars().all()
         if not orders:
@@ -133,7 +137,8 @@ async def show_orders(message: Message):
             
             text = f"🧾 <b>Buyurtma #{order_number}</b> | {status_text}\n🕒 Sana: {date_time}\n\n🍽 <b>Taomlar:</b>\n"
             for item in items:
-                prod_name = next((p["name"] for cat in PRODUCTS.values() for p in cat if p["id"] == item.product_id), "Noma'lum")
+                # <--- JONLI MENYUDAN QIDIRAMIZ --->
+                prod_name = next((p["name"] for cat in active_menu.values() for p in cat["items"] if p["id"] == item.product_id), "Noma'lum")
                 text += f"— {prod_name} ({item.quantity} ta)\n"
             text += f"\n💳 Jami summa: {order.total_price:,.0f} so'm\n"
             
