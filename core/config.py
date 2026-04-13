@@ -13,3 +13,10 @@ DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_wLstql8h7kgn@ep-solitary-c
 # 🔴 REDIS SOZLAMALARI (Upstash.com)
 # ==========================================
 REDIS_URL = "rediss://default:gQAAAAAAATmoAAIncDIzZWUyZWIzMzRjMzk0Nzg5YTgzN2Q5NzJlYjIwMmI2NHAyODAyOTY@fond-ape-80296.upstash.io:6379"
+
+# ==========================================
+# 🟢 IIKO API SOZLAMALARI
+# ==========================================
+IIKO_API_LOGIN = "Sizning_iiko_api_loginingiz"  # iikoCloud dan olinadi
+IIKO_ORGANIZATION_ID = "Sizning_tashkilot_ID"     # iikoCloud dan olinadi
+IIKO_TERMINAL_ID = "Sizning_kassa_ID"

@@ -1,5 +1,6 @@
 import math
 import asyncio
+from core.iiko_api import send_order_to_iiko, get_active_menu
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery, 
@@ -37,21 +38,6 @@ class Checkout(StatesGroup):
     notes = State()
     payment = State()
 
-PRODUCTS = {
-    "lagmon": [
-        {"id": "l1", "name": "Qovurma Lag'mon", "price": 45000, "desc": "Maxsus qovurma lag'mon"},
-        {"id": "l2", "name": "Quyuq Lag'mon", "price": 40000, "desc": "Go'shtli quyuq lag'mon"}
-    ],
-    "shashlik": [
-        {"id": "s1", "name": "Qiyma Shashlik", "price": 15000, "desc": "Mol go'shtidan qiyma shashlik"},
-        {"id": "s2", "name": "Jigar Shashlik", "price": 14000, "desc": "Yumshoq jigar shashlik"}
-    ],
-    "drinks": [
-        {"id": "d1", "name": "Coca-Cola 1L", "price": 12000, "desc": "Muzdek Coca-Cola"},
-        {"id": "d2", "name": "Qora Choy", "price": 5000, "desc": "Eron qora choyi"}
-    ]
-}
-
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371.0 
     dlat = math.radians(lat2 - lat1)
@@ -74,6 +60,9 @@ async def get_menu_and_cart_content(session, telegram_id):
     cart = await get_or_create_cart(session, telegram_id)
     result = await session.execute(select(CartItem).where(CartItem.cart_id == cart.id))
     cart_items = result.scalars().all()
+    
+    # 1. JONLI MENYUNI OLAMIZ
+    active_menu = await get_active_menu()
 
     text = "🍔 <b>Lag'monxona Durujba menyusi:</b>\n\n"
     total_price = DELIVERY_FEE 
@@ -83,7 +72,7 @@ async def get_menu_and_cart_content(session, telegram_id):
         has_items = True
         text += "🛒 <b>JORIY SAVAT:</b>\n"
         for idx, item in enumerate(cart_items, 1):
-            prod_info = next((p for cat in PRODUCTS.values() for p in cat if p["id"] == item.product_id), None)
+            prod_info = next((p for cat in active_menu.values() for p in cat["items"] if p["id"] == item.product_id), None)
             if prod_info:
                 item_total = prod_info["price"] * item.quantity
                 total_price += item_total
@@ -97,11 +86,10 @@ async def get_menu_and_cart_content(session, telegram_id):
 
     text += "👇 <b>Qaysi bo'limdan taom tanlaysiz?</b>"
 
-    inline_kb = [
-        [InlineKeyboardButton(text="🍜 Lag'monlar", callback_data="category_lagmon")],
-        [InlineKeyboardButton(text="🍢 Shashliklar", callback_data="category_shashlik")],
-        [InlineKeyboardButton(text="🥤 Ichimliklar", callback_data="category_drinks")]
-    ]
+    # 2. BO'LIMLARNI (Kategoriyalarni) JONLI MENYUDAN CHIZAMIZ
+    inline_kb = []
+    for cat_id, cat_data in active_menu.items():
+        inline_kb.append([InlineKeyboardButton(text=cat_data["name"], callback_data=f"category_{cat_id}")])
 
     if has_items:
         inline_kb.append([InlineKeyboardButton(text="✅ Buyurtma berish", callback_data="checkout")])
@@ -110,7 +98,7 @@ async def get_menu_and_cart_content(session, telegram_id):
     return text, InlineKeyboardMarkup(inline_keyboard=inline_kb)
 
 # ==========================================
-# MENYU VA SAVAT BO'LIMI (YANGILANGAN RASM MANTIQI)
+# MENYU VA SAVAT BO'LIMI 
 # ==========================================
 @router.message(F.text.in_(["🛒 Menyu", "🛒 Меню", "🛍 Savat", "🛍 Корзина"]))
 async def show_main_menu(message: Message):
@@ -118,38 +106,78 @@ async def show_main_menu(message: Message):
         text, kb = await get_menu_and_cart_content(session, message.from_user.id)
         
         try:
-            # 1 ta rasm, yozuv va tugma bitta xabarda chiqadi
             await message.answer_photo(photo=FSInputFile("menyu1.jpg"), caption=text, reply_markup=kb, parse_mode="HTML")
         except Exception:
-            # Agar rasm fayli topilmasa, xato bermay faqat yozuv chiqadi
             await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("category_"))
 async def show_products(callback: CallbackQuery):
-    cat_id = callback.data.split("_")[1]
-    products = PRODUCTS.get(cat_id, [])
+    cat_id = callback.data.split("category_")[1]
+    active_menu = await get_active_menu()
     
-    inline_kb = [
-        [InlineKeyboardButton(text=f"{p['name']} - {p['price']:,.0f} so'm", callback_data=f"prod_{cat_id}_{p['id']}")]
-        for p in products
-    ]
+    if cat_id not in active_menu:
+        await callback.answer("Bu bo'lim hozircha mavjud emas.", show_alert=True)
+        return
+        
+    products = active_menu[cat_id]["items"]
+    
+    inline_kb = []
+    for p in products:
+        if p["is_stop"]:
+            inline_kb.append([InlineKeyboardButton(text=f"🚫 {p['name']} (Tugagan)", callback_data="stop_item")])
+        else:
+            inline_kb.append([InlineKeyboardButton(text=f"{p['name']} - {p['price']:,.0f} so'm", callback_data=f"prod_{cat_id}_{p['id']}")])
+            
     inline_kb.append([InlineKeyboardButton(text="🔙 Ortga (Menyuga)", callback_data="back_to_categories")])
     kb = InlineKeyboardMarkup(inline_keyboard=inline_kb)
-    text = "👇 <b>Taomlardan birini tanlang:</b>"
+    text = f"👇 <b>{active_menu[cat_id]['name']} bo'limidagi taomlar:</b>"
     
-    # Rasm bo'lsa uni o'chirib, toza yozuvni o'zini yuboramiz (Ichkari bo'limlar uchun)
     if callback.message.photo:
         await callback.message.delete()
         await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
+@router.callback_query(F.data == "stop_item")
+async def answer_stop_item(callback: CallbackQuery):
+    await callback.answer("❌ Uzr, bu taom hozirgina tugadi (Stop-list).", show_alert=True)
+
+@router.callback_query(F.data.startswith("add_"))
+async def add_to_cart_db(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    prod_id = parts[1]
+    quantity = int(parts[2])
+    telegram_id = callback.from_user.id
+    
+    active_menu = await get_active_menu()
+    product_name = next((p["name"] for cat in active_menu.values() for p in cat["items"] if p["id"] == prod_id), "Taom")
+                
+    async with AsyncSessionLocal() as session:
+        cart = await get_or_create_cart(session, telegram_id)
+        result = await session.execute(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.product_id == prod_id))
+        item = result.scalars().first()
+        
+        if item:
+            item.quantity += quantity
+        else:
+            new_item = CartItem(cart_id=cart.id, product_id=prod_id, quantity=quantity)
+            session.add(new_item)
+        await session.commit()
+        text, kb = await get_menu_and_cart_content(session, telegram_id)
+        
+    await callback.answer(f"✅ {product_name} ({quantity} ta) savatga qo'shildi!", show_alert=False)
+    
+    await callback.message.delete()
+    try:
+        await callback.message.answer_photo(photo=FSInputFile("menyu1.jpg"), caption=text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        
 @router.callback_query(F.data == "back_to_categories")
 async def back_to_categories(callback: CallbackQuery):
     async with AsyncSessionLocal() as session:
         text, kb = await get_menu_and_cart_content(session, callback.from_user.id)
         
-    # Ortga (asosiy menyuga) qaytganda yana rasmni chiqaramiz
     if not callback.message.photo:
         await callback.message.delete()
         try:
@@ -162,7 +190,10 @@ async def back_to_categories(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("prod_"))
 async def show_product_quantity(callback: CallbackQuery):
     _, cat_id, prod_id = callback.data.split("_")
-    product = next((p for p in PRODUCTS[cat_id] if p["id"] == prod_id), None)
+    active_menu = await get_active_menu()
+    product = None
+    if cat_id in active_menu:
+        product = next((p for p in active_menu[cat_id]["items"] if p["id"] == prod_id), None)
     
     if product:
         quantity = 1 
@@ -198,35 +229,6 @@ async def change_quantity(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Ortga", callback_data=f"category_{cat_id}")]
     ])
     await callback.message.edit_reply_markup(reply_markup=kb)
-
-@router.callback_query(F.data.startswith("add_"))
-async def add_to_cart_db(callback: CallbackQuery):
-    parts = callback.data.split("_")
-    prod_id = parts[1]
-    quantity = int(parts[2])
-    telegram_id = callback.from_user.id
-    product_name = next((p["name"] for cat in PRODUCTS.values() for p in cat if p["id"] == prod_id), "")
-                
-    async with AsyncSessionLocal() as session:
-        cart = await get_or_create_cart(session, telegram_id)
-        result = await session.execute(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.product_id == prod_id))
-        item = result.scalars().first()
-        
-        if item:
-            item.quantity += quantity
-        else:
-            new_item = CartItem(cart_id=cart.id, product_id=prod_id, quantity=quantity)
-            session.add(new_item)
-        await session.commit()
-        text, kb = await get_menu_and_cart_content(session, telegram_id)
-        
-    await callback.answer(f"✅ {product_name} ({quantity} ta) savatga qo'shildi!", show_alert=False)
-    # Qo'shilgach yana asosiy menyuga (rasmli) qaytaradi
-    await callback.message.delete()
-    try:
-        await callback.message.answer_photo(photo=FSInputFile("menyu1.jpg"), caption=text, reply_markup=kb, parse_mode="HTML")
-    except Exception:
-        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data == "clear_cart")
 async def clear_cart(callback: CallbackQuery):
@@ -275,7 +277,7 @@ async def order_alert_task(bot: Bot, order_id: int, telegram_id: int, short_text
             pass 
 
 # ==========================================
-# QABUL QILISH, CHEK VA HOLATLAR (YANGILANGAN)
+# QABUL QILISH, CHEK VA HOLATLAR 
 # ==========================================
 @router.callback_query(F.data.startswith("accept_"))
 async def process_accept_order(callback: CallbackQuery, bot: Bot):
@@ -308,27 +310,59 @@ async def process_print_receipt(callback: CallbackQuery, bot: Bot):
     order_id = int(parts[1])
     telegram_id = int(parts[2])
 
-    await callback.answer("🖨 iiko tizimiga uzatildi. Chek chiqdi!", show_alert=False)
+    await callback.answer("⏳ iiko tizimiga uzatilmoqda...", show_alert=False)
 
-    # 1. MIJOZGA "QABUL QILINDI" XABARI KETADI
-    try:
-        await bot.send_message(
-            chat_id=telegram_id,
-            text=f"✅ <b>Sizning #{order_id}-buyurtmangiz qabul qilindi!</b>\n\n👨‍🍳 Oshxona tayyorlashni boshladi...",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
+    async with AsyncSessionLocal() as session:
+        user_res = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = user_res.scalars().first()
+        phone = user.phone_number if user else "+998000000000"
+        name = user.full_name if user else "Mijoz"
+        
+        order_res = await session.execute(select(Order).where(Order.id == order_id))
+        order = order_res.scalars().first()
+        notes = order.courier_notes if order else ""
+        
+        items_res = await session.execute(select(OrderItem).where(OrderItem.order_id == order_id))
+        order_items = items_res.scalars().all()
+        
+        iiko_items = []
+        for o_item in order_items:
+            iiko_items.append({
+                "productId": "00000000-0000-0000-0000-000000000000", 
+                "amount": o_item.quantity,
+                "price": o_item.price
+            })
 
-    # 2. ADMIN TUGMALARI ALMASHADI (Yetkazildi va Bekor qilish qoladi)
-    new_admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Yetkazildi", callback_data=f"status_completed_{order_id}_{telegram_id}")],
-        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{order_id}_{telegram_id}")]
-    ])
-    try:
-        await callback.message.edit_reply_markup(reply_markup=new_admin_kb)
-    except Exception:
-        pass
+    success, message_or_error = await send_order_to_iiko(
+        order_id=order_id,
+        phone_number=phone,
+        customer_name=name,
+        delivery_type="Bot orqali", 
+        items=iiko_items,
+        notes=notes
+    )
+
+    if success:
+        await callback.message.answer(f"✅ #{order_id} buyurtma iiko kassasida chop etildi!")
+        try:
+            await bot.send_message(
+                chat_id=telegram_id,
+                text=f"✅ <b>Sizning #{order_id}-buyurtmangiz qabul qilindi!</b>\n\n👨‍🍳 Oshxona tayyorlashni boshladi...",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+        new_admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Yetkazildi", callback_data=f"status_completed_{order_id}_{telegram_id}")],
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{order_id}_{telegram_id}")]
+        ])
+        try:
+            await callback.message.edit_reply_markup(reply_markup=new_admin_kb)
+        except Exception:
+            pass
+    else:
+        await callback.message.answer(f"❌ <b>iiko ga ulashda xatolik:</b>\n<code>{message_or_error}</code>", parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("status_completed_"))
 async def process_status_completed(callback: CallbackQuery, bot: Bot):
@@ -336,13 +370,11 @@ async def process_status_completed(callback: CallbackQuery, bot: Bot):
     order_id = int(parts[2])
     telegram_id = int(parts[3])
 
-    # Mijozga Xabar
     try:
         await bot.send_message(chat_id=telegram_id, text=f"🎉 <b>#{order_id}-buyurtmangiz yetkazildi!</b>\n\nYoqimli ishtaha! Yana buyurtma kutib qolamiz.", parse_mode="HTML")
     except Exception:
         pass
 
-    # Admindagi xabarni qotirish
     old_text = callback.message.html_text or callback.message.text
     await callback.message.edit_text(text=f"{old_text}\n\n✅ <b>HOLATI: YETKAZILDI</b>", reply_markup=None, parse_mode="HTML")
     await callback.answer("Buyurtma yetkazildi deb belgilandi!", show_alert=False)
@@ -353,13 +385,11 @@ async def process_status_cancelled(callback: CallbackQuery, bot: Bot):
     order_id = int(parts[2])
     telegram_id = int(parts[3])
 
-    # Mijozga Xabar
     try:
         await bot.send_message(chat_id=telegram_id, text=f"❌ <b>Kechirasiz, #{order_id}-buyurtmangiz bekor qilindi.</b>\n\nSababini bilish uchun ma'muriyat bilan bog'laning.", parse_mode="HTML")
     except Exception:
         pass
 
-    # Admindagi xabarni qotirish
     old_text = callback.message.html_text or callback.message.text
     await callback.message.edit_text(text=f"{old_text}\n\n❌ <b>HOLATI: BEKOR QILINDI</b>", reply_markup=None, parse_mode="HTML")
     await callback.answer("Buyurtma bekor qilindi!", show_alert=False)
@@ -387,7 +417,6 @@ async def process_location(message: Message, state: FSMContext):
     distance = calculate_distance(RESTAURANT_LAT, RESTAURANT_LON, user_lat, user_lon)
     await state.update_data(latitude=user_lat, longitude=user_lon)
     
-    # 2.5 km dan uzoq bo'lsa Yandex ogohlantirishi chiqadi
     if distance > MAX_DISTANCE_KM:
         text = (
             f"🚕 <b>Sizning manzilingiz restorandan {distance:.1f} km uzoqlikda.</b>\n\n"
@@ -402,13 +431,11 @@ async def process_location(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
         return
 
-    # 2.5 km dan yaqin bo'lsa
     await state.update_data(delivery_type="Xususiy kuryer")
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="O'tkazib yuborish ⏭")]], resize_keyboard=True)
     await message.answer("📝 <b>Kuryer uchun qo'shimcha izoh qoldiring:</b>\n(Masalan: Uy raqami, podyezd, domofon kodi)", reply_markup=kb, parse_mode="HTML")
     await state.set_state(Checkout.notes)
 
-# --- YANDEX TUGMALARI UCHUN JAVOBLAR ---
 @router.callback_query(F.data == "yandex_accept")
 async def process_yandex_accept(callback: CallbackQuery, state: FSMContext):
     await state.update_data(delivery_type="Yandex Yetkazib berish")
@@ -437,9 +464,9 @@ async def process_notes(message: Message, state: FSMContext):
 async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, payment_type: str, payment_info: dict = None):
     telegram_id = message.from_user.id
     checkout_data = await state.get_data()
-    
-    # Yetkazib berish turini olamiz
     delivery_type = checkout_data.get("delivery_type", "Xususiy kuryer")
+    
+    active_menu = await get_active_menu()
     
     async with AsyncSessionLocal() as session:
         user_result = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -452,7 +479,7 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
         
         total_price = DELIVERY_FEE
         for item in cart_items:
-            price = next((p["price"] for cat in PRODUCTS.values() for p in cat if p["id"] == item.product_id), 0)
+            price = next((p["price"] for cat in active_menu.values() for p in cat["items"] if p["id"] == item.product_id), 0)
             total_price += price * item.quantity
         
         today_start = datetime.combine(datetime.today(), time.min)
@@ -468,7 +495,7 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
         
         items_text = ""
         for item in cart_items:
-            prod_info = next((p for cat in PRODUCTS.values() for p in cat if p["id"] == item.product_id), None)
+            prod_info = next((p for cat in active_menu.values() for p in cat["items"] if p["id"] == item.product_id), None)
             if prod_info:
                 o_item = OrderItem(order_id=new_order.id, product_id=item.product_id, quantity=item.quantity, price=prod_info["price"])
                 session.add(o_item)
@@ -479,7 +506,6 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
     
     await state.clear()
     
-    # 1. MIJOZGA JAVOB
     text = (
         f"⏳ <b>Buyurtmangiz tasdiqlanishi kutilmoqda...</b>\n\n"
         f"🧾 <b>Buyurtma raqami:</b> #{new_daily_number}\n"
@@ -495,7 +521,6 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
     if payment_info:
         receipt_text = f"🧾 Payme/Click: <code>{payment_info['provider_charge_id']}</code>\n\n"
 
-    # 2. ADMINGA QISQA XABAR (TINIMSIZ)
     short_alert_text = (
         f"🚨 <b>DIQQAT! YANGI BUYURTMA #{new_daily_number}</b>\n\n"
         f"📞 <b>Tel:</b> {phone_number}\n"
@@ -504,7 +529,6 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
         f"<i>⚠️ Qabul qilinmaguncha bu xabar har 5 soniyada yangilanadi!</i>"
     )
 
-    # 3. ADMINGA TO'LIQ XABAR
     full_admin_text = (
         f"🆕 <b>BUYURTMA #{new_daily_number} (QABUL QILINGAN)</b>\n\n"
         f"👤 Mijoz: {message.from_user.full_name} (@{message.from_user.username})\n"
@@ -527,13 +551,15 @@ async def process_cash_payment(message: Message, state: FSMContext, bot: Bot):
 @router.message(Checkout.payment, F.text == "💳 Payme/Click")
 async def send_invoice(message: Message, state: FSMContext, bot: Bot):
     telegram_id = message.from_user.id
+    active_menu = await get_active_menu()
+    
     async with AsyncSessionLocal() as session:
         cart = await get_or_create_cart(session, telegram_id)
         result = await session.execute(select(CartItem).where(CartItem.cart_id == cart.id))
         cart_items = result.scalars().all()
         total_price = DELIVERY_FEE
         for item in cart_items:
-            price = next((p["price"] for cat in PRODUCTS.values() for p in cat if p["id"] == item.product_id), 0)
+            price = next((p["price"] for cat in active_menu.values() for p in cat["items"] if p["id"] == item.product_id), 0)
             total_price += price * item.quantity
 
     prices = [LabeledPrice(label="Lag'monxona Durujba - Buyurtma", amount=int(total_price * 100))]
