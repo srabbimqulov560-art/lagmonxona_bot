@@ -13,7 +13,6 @@ from sqlalchemy.future import select
 from db.engine import AsyncSessionLocal
 from db.models import User
 from keyboards.default import get_main_menu_kb 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 router = Router()
 
@@ -38,13 +37,14 @@ async def cmd_start(message: Message, state: FSMContext):
         "📞 <b>Aloqa uchun telefonlar:</b>\n"
         "▫️ +998 90 979 23 93\n"
         "▫️ +998 90 480 23 93\n"
-        social_kb = InlineKeyboardMarkup(inline_keyboard=[
+    )
+        
+    social_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Telegram kanalimiz", url="http://t.me/lagmonxona_1")],
         [InlineKeyboardButton(text="📸 Instagram sahifamiz", url="https://www.instagram.com/lagmonxona.uz?igsh=MXVvYnJjZHlxa2c4ZA==")]
     ])
     
     await message.answer("📱 Bizning ijtimoiy tarmoqlarimizga obuna bo'lishni unutmang:", reply_markup=social_kb)
-    )
 
     # Mijoz bazada bormi tekshiramiz
     async with AsyncSessionLocal() as session:
