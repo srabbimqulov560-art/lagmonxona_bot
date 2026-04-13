@@ -155,7 +155,7 @@ async def order_alert_task(bot: Bot, order_id: int, telegram_id: int, short_text
             pass 
 
 # ==========================================
-# QABUL QILISH VA CHEK CHIQARISH TUGMALARI (YANGI)
+# QABUL QILISH VA CHEK CHIQARISH TUGMALARI (YANGI MANTIQ)
 # ==========================================
 @router.callback_query(F.data.startswith("accept_"))
 async def process_accept_order(callback: CallbackQuery, bot: Bot):
@@ -168,13 +168,10 @@ async def process_accept_order(callback: CallbackQuery, bot: Bot):
         ACTIVE_ALERTS[order_id]["stop"] = True 
         full_text = ACTIVE_ALERTS[order_id]["full_text"]
         
-        # Yangi iiko va status tugmalarini yasaymiz
+        # 1-BOSQICH: Faqat "Chek chiqarish" va "Bekor qilish" chiqadi (Yetkazildi hozircha yo'q)
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🖨 Chek chiqarish (iiko)", callback_data=f"print_{order_id}")],
-            [
-                InlineKeyboardButton(text="✅ Yetkazildi", callback_data=f"status_completed_{order_id}_{telegram_id}"),
-                InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{order_id}_{telegram_id}")
-            ]
+            [InlineKeyboardButton(text="🖨 Chek chiqarish (iiko)", callback_data=f"print_{order_id}_{telegram_id}")],
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{order_id}_{telegram_id}")]
         ])
         
         try:
@@ -189,7 +186,23 @@ async def process_accept_order(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith("print_"))
 async def process_print_receipt(callback: CallbackQuery):
-    await callback.answer("🖨 iiko integratsiyasi tayyor bo'lgach, avtomatik chek chiqadi!", show_alert=True)
+    parts = callback.data.split("_")
+    order_id = int(parts[1])
+    telegram_id = int(parts[2])
+
+    await callback.answer("🖨 iiko tizimiga uzatildi. Chek chiqdi!", show_alert=False)
+
+    # 2-BOSQICH: Chek bosilgach, uning o'rniga "Yetkazildi" tugmasi keladi
+    new_admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Yetkazildi", callback_data=f"status_completed_{order_id}_{telegram_id}")],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"status_cancelled_{order_id}_{telegram_id}")]
+    ])
+    
+    try:
+        # Xabarning faqat pastdagi tugmalarini yangilaymiz (matn o'zgarmaydi)
+        await callback.message.edit_reply_markup(reply_markup=new_admin_kb)
+    except Exception:
+        pass
 
 
 # ==========================================
