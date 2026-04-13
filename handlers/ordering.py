@@ -385,19 +385,43 @@ async def process_location(message: Message, state: FSMContext):
     user_lon = message.location.longitude
     
     distance = calculate_distance(RESTAURANT_LAT, RESTAURANT_LON, user_lat, user_lon)
+    await state.update_data(latitude=user_lat, longitude=user_lon)
+    
+    # 2.5 km dan uzoq bo'lsa Yandex ogohlantirishi chiqadi
     if distance > MAX_DISTANCE_KM:
         text = (
-            f"❗️ <b>Kechirasiz, siz restorandan {distance:.1f} km masofada joylashgansiz.</b>\n\n"
-            f"Bizning xususiy yetkazib berish xizmatimiz faqat <b>{MAX_DISTANCE_KM} km</b> radiusda ishlaydi."
+            f"🚕 <b>Sizning manzilingiz restorandan {distance:.1f} km uzoqlikda.</b>\n\n"
+            f"Bizning xususiy kuryerimiz faqat {MAX_DISTANCE_KM} km radiusda xizmat ko'rsatadi. "
+            f"Sizning buyurtmangiz <b>Yandex Yetkazib berish</b> xizmati orqali yuboriladi va yo'lkira narxi Yandex tarifiga asosan hisoblanadi.\n\n"
+            f"Davom etishga rozimisiz?"
         )
-        await state.clear()
-        await message.answer(text, reply_markup=get_main_menu_kb("uz"), parse_mode="HTML")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Qabul qilish", callback_data="yandex_accept")],
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="yandex_cancel")]
+        ])
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
         return
 
-    await state.update_data(latitude=user_lat, longitude=user_lon)
+    # 2.5 km dan yaqin bo'lsa
+    await state.update_data(delivery_type="Xususiy kuryer")
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="O'tkazib yuborish ⏭")]], resize_keyboard=True)
     await message.answer("📝 <b>Kuryer uchun qo'shimcha izoh qoldiring:</b>\n(Masalan: Uy raqami, podyezd, domofon kodi)", reply_markup=kb, parse_mode="HTML")
     await state.set_state(Checkout.notes)
+
+# --- YANDEX TUGMALARI UCHUN JAVOBLAR ---
+@router.callback_query(F.data == "yandex_accept")
+async def process_yandex_accept(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(delivery_type="Yandex Yetkazib berish")
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="O'tkazib yuborish ⏭")]], resize_keyboard=True)
+    await callback.message.delete()
+    await callback.message.answer("📝 <b>Kuryer uchun qo'shimcha izoh qoldiring:</b>\n(Masalan: Uy raqami, podyezd, domofon kodi)", reply_markup=kb, parse_mode="HTML")
+    await state.set_state(Checkout.notes)
+
+@router.callback_query(F.data == "yandex_cancel")
+async def process_yandex_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await callback.message.answer("🛑 Buyurtma berish bekor qilindi.", reply_markup=get_main_menu_kb("uz"))
 
 @router.message(Checkout.notes, F.text)
 async def process_notes(message: Message, state: FSMContext):
@@ -413,6 +437,9 @@ async def process_notes(message: Message, state: FSMContext):
 async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, payment_type: str, payment_info: dict = None):
     telegram_id = message.from_user.id
     checkout_data = await state.get_data()
+    
+    # Yetkazib berish turini olamiz
+    delivery_type = checkout_data.get("delivery_type", "Xususiy kuryer")
     
     async with AsyncSessionLocal() as session:
         user_result = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -452,10 +479,11 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
     
     await state.clear()
     
-    # 1. MIJOZGA "KUTILMOQDA" JAVOBI (YANGILANGAN)
+    # 1. MIJOZGA JAVOB
     text = (
         f"⏳ <b>Buyurtmangiz tasdiqlanishi kutilmoqda...</b>\n\n"
         f"🧾 <b>Buyurtma raqami:</b> #{new_daily_number}\n"
+        f"🚚 <b>Yetkazib berish:</b> {delivery_type}\n"
         f"🍽 <b>Tanlangan taomlar:</b>\n{items_text}\n"
         f"💳 <b>To'lov turi:</b> {payment_type}\n"
         f"💰 <b>Jami summa:</b> {total_price:,.0f} so'm\n\n"
@@ -467,17 +495,21 @@ async def save_order_and_notify(message: Message, state: FSMContext, bot: Bot, p
     if payment_info:
         receipt_text = f"🧾 Payme/Click: <code>{payment_info['provider_charge_id']}</code>\n\n"
 
+    # 2. ADMINGA QISQA XABAR (TINIMSIZ)
     short_alert_text = (
         f"🚨 <b>DIQQAT! YANGI BUYURTMA #{new_daily_number}</b>\n\n"
         f"📞 <b>Tel:</b> {phone_number}\n"
+        f"🚚 <b>Turi:</b> {delivery_type}\n"
         f"🍽 <b>Menyu:</b>\n{items_text}\n"
         f"<i>⚠️ Qabul qilinmaguncha bu xabar har 5 soniyada yangilanadi!</i>"
     )
 
+    # 3. ADMINGA TO'LIQ XABAR
     full_admin_text = (
         f"🆕 <b>BUYURTMA #{new_daily_number} (QABUL QILINGAN)</b>\n\n"
         f"👤 Mijoz: {message.from_user.full_name} (@{message.from_user.username})\n"
-        f"📞 Telefon: {phone_number}\n\n"
+        f"📞 Telefon: {phone_number}\n"
+        f"🚚 Yetkazib berish: <b>{delivery_type}</b>\n\n"
         f"🍽 <b>Buyurtma tarkibi:</b>\n{items_text}\n"
         f"📍 <a href='https://yandex.ru/maps/?pt={checkout_data.get('longitude')},{checkout_data.get('latitude')}&z=18&l=map'>Mijoz lokatsiyasi (Xarita)</a>\n"
         f"📝 Izoh: {checkout_data.get('notes')}\n"
