@@ -328,7 +328,7 @@ async def process_print_receipt(callback: CallbackQuery, bot: Bot):
         iiko_items = []
         for o_item in order_items:
             iiko_items.append({
-                "productId": "00000000-0000-0000-0000-000000000000", 
+                "productId":": o_item.product_id,", 
                 "amount": o_item.quantity,
                 "price": o_item.price
             })

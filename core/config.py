@@ -17,6 +17,6 @@ REDIS_URL = "rediss://default:gQAAAAAAATmoAAIncDIzZWUyZWIzMzRjMzk0Nzg5YTgzN2Q5Nz
 # ==========================================
 # 🟢 IIKO API SOZLAMALARI
 # ==========================================
-IIKO_API_LOGIN = "Sizning_iiko_api_loginingiz"  # iikoCloud dan olinadi
-IIKO_ORGANIZATION_ID = "Sizning_tashkilot_ID"     # iikoCloud dan olinadi
+IIKO_API_LOGIN = "1dc41167ea7443f89430ac220e9d5fdf"
+IIKO_ORGANIZATION_ID = "6ef181de-e851-4416-b1af-484cea7d9f33"
 IIKO_TERMINAL_ID = "Sizning_kassa_ID"
