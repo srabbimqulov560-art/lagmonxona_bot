@@ -61,9 +61,12 @@ async def get_active_menu():
                 menu_data = await menu_resp.json()
                 
                 # --- DIAGNOSTIKA UCHUN DATCHIK ---
+                menu_data = await menu_resp.json()
+                
+                # --- DIAGNOSTIKA UCHUN DATCHIK ---
                 print("=== IIKO DIAGNOSTIKA ===")
+                print("IIKO ASL JAVOBI:", menu_data)  # <--- MANA SHU QATORNI QO'SHING
                 print(f"Guruhlar soni: {len(menu_data.get('groups', []))}")
-                print(f"Taomlar soni: {len(menu_data.get('products', []))}")
                 
                 real_menu = {}
                 for group in menu_data.get("groups", []):
