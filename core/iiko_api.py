@@ -24,18 +24,16 @@ async def get_iiko_token():
 CACHE = {"menu": None, "time": 0}
 
 async def get_active_menu():
-    # Kesh (Xotira) tekshiruvi: iiko ni tinimsiz bezovta qilmaslik uchun har 5 daqiqada 1 marta yangilanadi
     if CACHE["menu"] and (time.time() - CACHE["time"] < 300):
         return CACHE["menu"]
 
     token = await get_iiko_token()
     
-    # AGAR KALITLAR BO'LMASA, TEST MENYUSINI BERAMIZ (Siz kalitlarni kiritguncha ishlab turishi uchun)
     if not token:
         CACHE["menu"] = {
             "lagmon": {"name": "🍜 Lag'monlar", "items": [
                 {"id": "l1", "name": "Qovurma Lag'mon", "price": 45000, "desc": "Maxsus qovurma lag'mon", "is_stop": False},
-                {"id": "l2", "name": "Quyuq Lag'mon", "price": 40000, "desc": "Go'shtli quyuq lag'mon", "is_stop": True} # <-- TEST UCHUN STOP LISTDA
+                {"id": "l2", "name": "Quyuq Lag'mon", "price": 40000, "desc": "Go'shtli quyuq lag'mon", "is_stop": True} 
             ]},
             "shashlik": {"name": "🍢 Shashliklar", "items": [
                 {"id": "s1", "name": "Qiyma Shashlik", "price": 15000, "desc": "Mol go'shtidan qiyma shashlik", "is_stop": False}
@@ -44,7 +42,6 @@ async def get_active_menu():
         CACHE["time"] = time.time()
         return CACHE["menu"]
 
-    # AGAR KALITLAR BO'LSA, HAQIQIY IIKO DAN OLAMIZ
     headers = {"Authorization": f"Bearer {token}"}
     async with aiohttp.ClientSession() as session:
         try:
@@ -63,33 +60,38 @@ async def get_active_menu():
             async with session.post(f"{BASE_URL}/nomenclature", json=menu_payload, headers=headers) as menu_resp:
                 menu_data = await menu_resp.json()
                 
+                # --- DIAGNOSTIKA UCHUN DATCHIK ---
+                print("=== IIKO DIAGNOSTIKA ===")
+                print(f"Guruhlar soni: {len(menu_data.get('groups', []))}")
+                print(f"Taomlar soni: {len(menu_data.get('products', []))}")
+                
                 real_menu = {}
-                # Guruhlarni (Kategoriyalarni) yig'amiz
                 for group in menu_data.get("groups", []):
                     real_menu[group["id"]] = {"name": group["name"], "items": []}
                 
-                # Taomlarni guruhlarga taqsimlaymiz va Stop Listni tekshiramiz
                 for product in menu_data.get("products", []):
-                    if product["type"] == "Dish" or product["type"] == "Good":
+                    if product.get("type") in ["Dish", "Good"]:
                         parent_id = product.get("parentGroup")
                         if parent_id in real_menu:
                             real_menu[parent_id]["items"].append({
                                 "id": product["id"],
                                 "name": product["name"],
-                                "price": product.get("currentPrice", 0),
-                                "desc": product.get("description", "Izoh yo'q"),
-                                "is_stop": product["id"] in stop_list_ids # Stop listda bor-yo'qligini belgilaymiz
+                                "price": product.get("currentPrice", 0) or 0,
+                                "desc": product.get("description", "Izoh yo'q") or "Izoh yo'q",
+                                "is_stop": product["id"] in stop_list_ids
                             })
                 
-                # Bo'sh guruhlarni tozalaymiz
+                eski_soni = len(real_menu)
                 real_menu = {k: v for k, v in real_menu.items() if len(v["items"]) > 0}
+                print(f"Bo'sh bo'lmagan guruhlar soni: {len(real_menu)} (Jami edi: {eski_soni})")
+                print("========================")
                 
                 CACHE["menu"] = real_menu
                 CACHE["time"] = time.time()
                 return real_menu
         except Exception as e:
             print(f"Menyuni olishda xatolik: {e}")
-            return CACHE["menu"] # Xato bo'lsa oxirgi eslab qolganini beradi
+            return CACHE["menu"]
 
 # ==========================================
 # 3. BUYURTMANI IIKO GA YUBORISH
